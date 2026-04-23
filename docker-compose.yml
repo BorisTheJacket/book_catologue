@@ -23,9 +23,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # BOT_TOKEN, ADMIN_*, MINI_APP_URL come from ./backend/.env — do not pass
-    # ADMIN_TELEGRAM_ID: ${ADMIN_TELEGRAM_ID} here or an unset compose var overwrites with empty.
+    # BOT_TOKEN, ADMIN_*, MINI_APP_URL: load from files — never use ADMIN_TELEGRAM_ID: ${ADMIN_TELEGRAM_ID}
+    # here; if ${ADMIN_TELEGRAM_ID} is unset during compose parse it becomes "" and overrides env_file.
     env_file:
+      - .env
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://novels_user:${POSTGRES_PASSWORD}@db:5432/novels
@@ -45,6 +46,7 @@ services:
         condition: service_healthy
     command: python bot.py
     env_file:
+      - .env
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://novels_user:${POSTGRES_PASSWORD}@db:5432/novels
