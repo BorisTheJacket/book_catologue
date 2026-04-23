@@ -6,7 +6,7 @@ import Admin from './Admin'
 import './index.css'
 
 function AuthGate({ children }) {
-  const { status } = useAuth()
+  const { status, lastAuthError } = useAuth()
 
   if (status === 'loading') {
     return (
@@ -31,10 +31,31 @@ function AuthGate({ children }) {
     )
   }
 
+  if (status === 'need_telegram') {
+    return (
+      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16, padding: 32, maxWidth: 420 }}>
+        <span style={{ fontSize: '3rem' }}>📱</span>
+        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: '1.5rem', fontWeight: 300, textAlign: 'center' }}>Open inside Telegram</h2>
+        <p style={{ color: '#7a6e63', textAlign: 'center', fontSize: '0.9rem', lineHeight: 1.6 }}>
+          This reader only works as a Telegram Mini App. Open your bot, tap <strong>Open Library</strong> (or your Mini App menu entry) so Telegram can pass a signed session.
+        </p>
+        <p style={{ color: '#7a6e63', textAlign: 'center', fontSize: '0.82rem', lineHeight: 1.5 }}>
+          If you already did that and still see this message, try closing the tab and opening the app again from the bot.
+        </p>
+      </div>
+    )
+  }
+
   if (status === 'error') {
     return (
-      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, padding: 32 }}>
-        <p style={{ color: '#c85a4a' }}>Connection error. Please try again.</p>
+      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, padding: 32, maxWidth: 480 }}>
+        <p style={{ color: '#c85a4a' }}>Could not reach the server or verify your session.</p>
+        {lastAuthError ? (
+          <p style={{ color: '#7a6e63', fontSize: '0.82rem', textAlign: 'center', wordBreak: 'break-word' }}>{lastAuthError}</p>
+        ) : null}
+        <p style={{ color: '#7a6e63', fontSize: '0.8rem', textAlign: 'center', lineHeight: 1.5 }}>
+          If the message mentions <code style={{ fontFamily: 'monospace' }}>Failed to fetch</code>, your browser could not call <code style={{ fontFamily: 'monospace' }}>https://your-domain/api/...</code>. On the server, nginx must proxy <code style={{ fontFamily: 'monospace' }}>/api/</code> to the API container.
+        </p>
       </div>
     )
   }

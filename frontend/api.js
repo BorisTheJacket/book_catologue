@@ -28,8 +28,17 @@ async function request(path, options = {}) {
     headers: { 'Content-Type': 'application/json', ...options.headers },
   })
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new Error(err.detail || res.statusText)
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    const detail = err.detail
+    const text =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((x) => x.msg || JSON.stringify(x)).join('; ')
+          : res.statusText
+    const ex = new Error(text || `HTTP ${res.status}`)
+    ex.status = res.status
+    throw ex
   }
   return res.json()
 }

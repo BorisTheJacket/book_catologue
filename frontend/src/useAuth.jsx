@@ -7,6 +7,7 @@ const AuthContext = createContext({
   telegramId: null,
   matchesAdminTelegramId: false,
   adminTelegramIdConfigured: false,
+  lastAuthError: null,
 })
 
 export function AuthProvider({ children }) {
@@ -15,6 +16,7 @@ export function AuthProvider({ children }) {
     telegramId: null,
     matchesAdminTelegramId: false,
     adminTelegramIdConfigured: false,
+    lastAuthError: null,
   })
 
   useEffect(() => {
@@ -29,6 +31,19 @@ export function AuthProvider({ children }) {
             telegramId: null,
             matchesAdminTelegramId: false,
             adminTelegramIdConfigured: false,
+            lastAuthError: null,
+          })
+          return
+        }
+
+        // Regular browser: no Telegram session — do not call /auth/verify with empty initData (401 → misleading "error")
+        if (!initData) {
+          setSession({
+            status: 'need_telegram',
+            telegramId: null,
+            matchesAdminTelegramId: false,
+            adminTelegramIdConfigured: false,
+            lastAuthError: null,
           })
           return
         }
@@ -39,12 +54,22 @@ export function AuthProvider({ children }) {
           telegramId: data.telegram_id ?? null,
           matchesAdminTelegramId: Boolean(data.matches_admin_telegram_id),
           adminTelegramIdConfigured: Boolean(data.admin_telegram_id_configured),
+          lastAuthError: null,
         })
       } catch (e) {
-        setSession((s) => ({
-          ...s,
-          status: e.message?.includes('403') ? 'denied' : 'error',
-        }))
+        const msg = e.message || String(e)
+        const denied =
+          e.status === 403 ||
+          msg.includes('403') ||
+          msg.toLowerCase().includes('access denied')
+        const needTg = e.status === 401 || msg.toLowerCase().includes('invalid telegram')
+        setSession({
+          status: denied ? 'denied' : needTg ? 'need_telegram' : 'error',
+          telegramId: null,
+          matchesAdminTelegramId: false,
+          adminTelegramIdConfigured: false,
+          lastAuthError: denied || needTg ? null : msg,
+        })
       }
     }
     check()
