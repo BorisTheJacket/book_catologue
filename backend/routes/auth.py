@@ -27,6 +27,14 @@ def _parse_admin_telegram_ids(raw: str) -> frozenset[str]:
 ADMIN_TELEGRAM_IDS = _parse_admin_telegram_ids(os.getenv("ADMIN_TELEGRAM_ID", ""))
 
 
+def _session_extras(telegram_id: str) -> dict:
+    """Non-secret hints for the Mini App (compare your ID to backend/.env ADMIN_TELEGRAM_ID)."""
+    return {
+        "matches_admin_telegram_id": telegram_id in ADMIN_TELEGRAM_IDS,
+        "admin_telegram_id_configured": bool(ADMIN_TELEGRAM_IDS),
+    }
+
+
 def verify_telegram_init_data(init_data: str) -> dict | None:
     """
     Verify the initData string sent by Telegram Mini App.
@@ -104,7 +112,7 @@ async def verify_user(
                 if not existing_any.is_active:
                     existing_any.is_active = True
                     await db.commit()
-                return {"access": True, "telegram_id": telegram_id}
+                return {"access": True, "telegram_id": telegram_id, **_session_extras(telegram_id)}
             db.add(
                 WhitelistedUser(
                     telegram_id=telegram_id,
@@ -114,7 +122,7 @@ async def verify_user(
                 )
             )
             await db.commit()
-            return {"access": True, "telegram_id": telegram_id}
+            return {"access": True, "telegram_id": telegram_id, **_session_extras(telegram_id)}
         raise HTTPException(status_code=403, detail="Access denied. You need an invite link.")
 
-    return {"access": True, "telegram_id": telegram_id}
+    return {"access": True, "telegram_id": telegram_id, **_session_extras(telegram_id)}

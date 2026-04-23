@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { fetchNovels } from '../api'
+import { API_BASE_URL, fetchNovels } from '../api'
+import { useAuth } from './useAuth'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+/** Covers are served from FastAPI at /static/... on the public origin, not under /api. */
+function publicOriginForStatic() {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin
+  }
+  return API_BASE_URL.replace(/\/api\/?$/, '')
+}
 
 export default function Catalogue() {
   const [novels, setNovels] = useState([])
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
+  const { telegramId, matchesAdminTelegramId, adminTelegramIdConfigured } = useAuth()
 
   useEffect(() => {
     fetchNovels()
@@ -30,6 +38,13 @@ export default function Catalogue() {
         <div style={styles.empty}>
           <span style={styles.emptyIcon}>📖</span>
           <p>No novels yet.</p>
+          <p style={styles.emptyHint}>
+            The library is empty until you add titles. Open{' '}
+            <Link to="/admin" style={styles.inlineLink}>Admin</Link>
+            {' '}and enter <code style={styles.code}>ADMIN_SECRET</code> from{' '}
+            <code style={styles.code}>backend/.env</code> (this is separate from{' '}
+            <code style={styles.code}>ADMIN_TELEGRAM_ID</code>, which is only for the Telegram bot).
+          </p>
         </div>
       ) : (
         <motion.div
@@ -43,12 +58,38 @@ export default function Catalogue() {
           ))}
         </motion.div>
       )}
+
+      {telegramId != null && (
+        <footer style={styles.debugFooter}>
+          <p style={styles.debugLine}>
+            Your Telegram user ID: <code style={styles.code}>{telegramId}</code>
+          </p>
+          {adminTelegramIdConfigured ? (
+            <p style={styles.debugLine}>
+              <code style={styles.code}>ADMIN_TELEGRAM_ID</code> on the server{' '}
+              {matchesAdminTelegramId ? (
+                <strong style={{ color: 'var(--accent)' }}>matches</strong>
+              ) : (
+                <strong style={{ color: 'var(--danger)' }}>does not match</strong>
+              )}{' '}
+              this ID (used for bot owner / invite tooling, not for creating novels).
+            </p>
+          ) : (
+            <p style={styles.debugLine}>
+              <code style={styles.code}>ADMIN_TELEGRAM_ID</code> is not set in{' '}
+              <code style={styles.code}>backend/.env</code> on the server.
+            </p>
+          )}
+        </footer>
+      )}
     </div>
   )
 }
 
 function NovelCard({ novel, onClick }) {
-  const coverUrl = novel.cover_image ? `${BASE_URL}${novel.cover_image}` : null
+  const coverUrl = novel.cover_image
+    ? `${publicOriginForStatic()}${novel.cover_image}`
+    : null
 
   return (
     <motion.div
@@ -199,4 +240,34 @@ const styles = {
     color: 'var(--text-muted)',
   },
   emptyIcon: { fontSize: '3rem' },
+  emptyHint: {
+    maxWidth: 420,
+    textAlign: 'center',
+    fontSize: '0.82rem',
+    lineHeight: 1.55,
+    marginTop: 8,
+    padding: '0 20px',
+  },
+  inlineLink: {
+    color: 'var(--accent)',
+    textDecoration: 'underline',
+    textUnderlineOffset: 3,
+  },
+  code: {
+    fontFamily: 'ui-monospace, monospace',
+    fontSize: '0.78em',
+    background: 'var(--bg-elevated)',
+    padding: '2px 6px',
+    borderRadius: 4,
+    border: '1px solid var(--border)',
+  },
+  debugFooter: {
+    marginTop: 'auto',
+    padding: '24px 20px 32px',
+    borderTop: '1px solid var(--border)',
+    fontSize: '0.75rem',
+    color: 'var(--text-muted)',
+    lineHeight: 1.5,
+  },
+  debugLine: { marginBottom: 8 },
 }

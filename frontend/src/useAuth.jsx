@@ -2,10 +2,20 @@ import { createContext, useContext, useEffect, useState } from 'react'
 import WebApp from '@twa-dev/sdk'
 import { verifyAccess } from '../api'
 
-const AuthContext = createContext(null)
+const AuthContext = createContext({
+  status: 'loading',
+  telegramId: null,
+  matchesAdminTelegramId: false,
+  adminTelegramIdConfigured: false,
+})
 
 export function AuthProvider({ children }) {
-  const [status, setStatus] = useState('loading') // loading | granted | denied | error
+  const [session, setSession] = useState({
+    status: 'loading',
+    telegramId: null,
+    matchesAdminTelegramId: false,
+    adminTelegramIdConfigured: false,
+  })
 
   useEffect(() => {
     async function check() {
@@ -13,23 +23,35 @@ export function AuthProvider({ children }) {
         WebApp.ready()
         const initData = WebApp.initData
 
-        // Dev fallback when running outside Telegram
         if (!initData && import.meta.env.DEV) {
-          setStatus('granted')
+          setSession({
+            status: 'granted',
+            telegramId: null,
+            matchesAdminTelegramId: false,
+            adminTelegramIdConfigured: false,
+          })
           return
         }
 
-        await verifyAccess(initData)
-        setStatus('granted')
+        const data = await verifyAccess(initData)
+        setSession({
+          status: 'granted',
+          telegramId: data.telegram_id ?? null,
+          matchesAdminTelegramId: Boolean(data.matches_admin_telegram_id),
+          adminTelegramIdConfigured: Boolean(data.admin_telegram_id_configured),
+        })
       } catch (e) {
-        setStatus(e.message?.includes('403') ? 'denied' : 'error')
+        setSession((s) => ({
+          ...s,
+          status: e.message?.includes('403') ? 'denied' : 'error',
+        }))
       }
     }
     check()
   }, [])
 
   return (
-    <AuthContext.Provider value={{ status }}>
+    <AuthContext.Provider value={session}>
       {children}
     </AuthContext.Provider>
   )

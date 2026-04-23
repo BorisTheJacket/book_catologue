@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  fetchNovels,
+  fetchNovel,
+  fetchAdminNovels,
   adminCreateNovel,
   adminUpdateNovel,
   adminDeleteNovel,
@@ -13,24 +14,41 @@ import {
 export default function Admin() {
   const [secret, setSecret] = useState('')
   const [authed, setAuthed] = useState(false)
+  const [loginError, setLoginError] = useState('')
   const [novels, setNovels] = useState([])
   const [selectedNovel, setSelectedNovel] = useState(null)
   const [view, setView] = useState('list') // list | edit | chapters | add
 
-  const login = () => {
-    if (secret.trim()) setAuthed(true)
+  const login = async () => {
+    setLoginError('')
+    try {
+      await fetchAdminNovels(secret)
+      setAuthed(true)
+    } catch (e) {
+      setLoginError(e.message || 'Access denied')
+    }
   }
 
   useEffect(() => {
-    if (authed) loadNovels()
+    if (!authed) return
+    loadNovels()
   }, [authed])
 
   async function loadNovels() {
-    const data = await fetchNovels()
+    const data = await fetchAdminNovels(secret)
     setNovels(data)
   }
 
-  if (!authed) return <LoginScreen secret={secret} setSecret={setSecret} onLogin={login} />
+  if (!authed) {
+    return (
+      <LoginScreen
+        secret={secret}
+        setSecret={setSecret}
+        onLogin={login}
+        error={loginError}
+      />
+    )
+  }
 
   return (
     <div style={styles.page}>
@@ -60,7 +78,7 @@ export default function Admin() {
           <motion.div key="add" {...fadeAnim}>
             <NovelForm
               secret={secret}
-              onSave={async (fd) => { await adminCreateNovel(fd); loadNovels(); setView('list') }}
+              onSave={async (fd) => { await adminCreateNovel(fd, secret); loadNovels(); setView('list') }}
               onCancel={() => setView('list')}
             />
           </motion.div>
@@ -71,7 +89,7 @@ export default function Admin() {
             <NovelForm
               novel={selectedNovel}
               secret={secret}
-              onSave={async (fd) => { await adminUpdateNovel(selectedNovel.id, fd); loadNovels(); setView('list') }}
+              onSave={async (fd) => { await adminUpdateNovel(selectedNovel.id, fd, secret); loadNovels(); setView('list') }}
               onCancel={() => setView('list')}
             />
           </motion.div>
@@ -80,7 +98,7 @@ export default function Admin() {
         {view === 'chapters' && selectedNovel && (
           <motion.div key="chapters" {...fadeAnim}>
             <ChapterManager
-              novel={selectedNovel}
+              novelSummary={selectedNovel}
               secret={secret}
               onBack={() => setView('list')}
             />
@@ -93,13 +111,19 @@ export default function Admin() {
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 
-function LoginScreen({ secret, setSecret, onLogin }) {
+function LoginScreen({ secret, setSecret, onLogin, error }) {
   return (
     <div style={styles.login}>
       <h2 style={styles.loginTitle}>Admin Access</h2>
+      <p style={styles.loginHint}>
+        Enter <code style={styles.codeInline}>ADMIN_SECRET</code> from <code style={styles.codeInline}>backend/.env</code>,
+        or open this Mini App inside Telegram: if your Telegram user ID is listed in{' '}
+        <code style={styles.codeInline}>ADMIN_TELEGRAM_ID</code>, you can leave the field blank and tap Enter.
+      </p>
+      {error ? <p style={styles.loginErr}>{error}</p> : null}
       <input
         type="password"
-        placeholder="Enter admin secret"
+        placeholder="ADMIN_SECRET (optional in Telegram for owner ID)"
         value={secret}
         onChange={e => setSecret(e.target.value)}
         onKeyDown={e => e.key === 'Enter' && onLogin()}
@@ -139,30 +163,46 @@ function NovelForm({ novel, secret, onSave, onCancel }) {
   const [title, setTitle] = useState(novel?.title || '')
   const [author, setAuthor] = useState(novel?.author || '')
   const [desc, setDesc] = useState(novel?.description || '')
+  const [published, setPublished] = useState(novel ? novel.is_published !== false : true)
   const [cover, setCover] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [saveErr, setSaveErr] = useState('')
 
   async function handleSave() {
+    setSaveErr('')
     setSaving(true)
     const fd = new FormData()
     fd.append('title', title)
     fd.append('author', author)
     fd.append('description', desc)
     fd.append('x_admin_secret', secret)
+    if (novel) fd.append('is_published', published ? 'true' : 'false')
     if (cover) fd.append('cover', cover)
-    try { await onSave(fd) }
-    finally { setSaving(false) }
+    try {
+      await onSave(fd)
+    } catch (e) {
+      setSaveErr(e.message || 'Save failed')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
     <div style={styles.form}>
       <h2 style={styles.formTitle}>{novel ? 'Edit Novel' : 'New Novel'}</h2>
+      {saveErr ? <p style={styles.loginErr}>{saveErr}</p> : null}
       <label style={styles.label}>Title</label>
       <input value={title} onChange={e => setTitle(e.target.value)} style={styles.input} />
       <label style={styles.label}>Author</label>
       <input value={author} onChange={e => setAuthor(e.target.value)} style={styles.input} />
       <label style={styles.label}>Description</label>
       <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={4} style={{ ...styles.input, resize: 'vertical' }} />
+      {novel ? (
+        <label style={styles.checkRow}>
+          <input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} />
+          <span>Published (visible in Library)</span>
+        </label>
+      ) : null}
       <label style={styles.label}>Cover Image</label>
       <input type="file" accept="image/*" onChange={e => setCover(e.target.files[0])} style={{ ...styles.input, padding: '8px' }} />
       <div style={styles.formActions}>
@@ -177,10 +217,29 @@ function NovelForm({ novel, secret, onSave, onCancel }) {
 
 // ── Chapter Manager ───────────────────────────────────────────────────────────
 
-function ChapterManager({ novel, secret, onBack }) {
-  const [chapters, setChapters] = useState(novel.chapters || [])
-  const [editing, setEditing] = useState(null) // chapter being edited
+function ChapterManager({ novelSummary, secret, onBack }) {
+  const [novel, setNovel] = useState(null)
+  const [loadErr, setLoadErr] = useState('')
+  const [chapters, setChapters] = useState([])
+  const [editing, setEditing] = useState(null)
   const [adding, setAdding] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoadErr('')
+    setNovel(null)
+    fetchNovel(novelSummary.id)
+      .then((data) => {
+        if (!cancelled) {
+          setNovel(data)
+          setChapters(data.chapters || [])
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setLoadErr(e.message || 'Failed to load novel')
+      })
+    return () => { cancelled = true }
+  }, [novelSummary.id])
 
   async function handleDelete(id) {
     if (!confirm('Delete chapter?')) return
@@ -190,14 +249,31 @@ function ChapterManager({ novel, secret, onBack }) {
 
   async function handleSaveChapter(chapterId, fd) {
     if (chapterId) {
-      const updated = await adminUpdateChapter(chapterId, fd)
+      const updated = await adminUpdateChapter(chapterId, fd, secret)
       setChapters(prev => prev.map(c => c.id === chapterId ? { ...c, ...updated } : c))
     } else {
-      const created = await adminAddChapter(novel.id, fd)
+      const created = await adminAddChapter(novel.id, fd, secret)
       setChapters(prev => [...prev, created])
     }
     setEditing(null)
     setAdding(false)
+  }
+
+  if (loadErr) {
+    return (
+      <div style={styles.form}>
+        <p style={styles.loginErr}>{loadErr}</p>
+        <button type="button" style={styles.ghostBtn} onClick={onBack}>← Back</button>
+      </div>
+    )
+  }
+
+  if (!novel) {
+    return (
+      <div style={{ ...styles.form, padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+        Loading chapters…
+      </div>
+    )
   }
 
   return (
@@ -293,6 +369,27 @@ const styles = {
     padding: 32, maxWidth: 340, margin: '80px auto',
   },
   loginTitle: { fontFamily: 'var(--font-serif)', fontSize: '1.6rem', fontWeight: 300, marginBottom: 8 },
+  loginHint: {
+    fontSize: '0.78rem',
+    color: 'var(--text-muted)',
+    lineHeight: 1.5,
+    marginBottom: 8,
+  },
+  loginErr: { color: 'var(--danger)', fontSize: '0.85rem', marginBottom: 8 },
+  codeInline: {
+    fontFamily: 'ui-monospace, monospace',
+    fontSize: '0.85em',
+    background: 'var(--bg-elevated)',
+    padding: '1px 5px',
+    borderRadius: 4,
+  },
+  checkRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    fontSize: '0.85rem',
+    color: 'var(--text-muted)',
+  },
   list: { display: 'flex', flexDirection: 'column', gap: 2, padding: '0 16px' },
   novelRow: {
     display: 'flex', alignItems: 'center', gap: 12,

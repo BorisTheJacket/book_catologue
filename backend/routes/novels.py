@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
+from sqlalchemy.orm import selectinload
 from typing import Optional
 from database import get_db
 from models import Novel, Chapter
-import aiofiles
+from routes.auth import verify_telegram_init_data, ADMIN_TELEGRAM_IDS
 import os
 import uuid
 from PIL import Image
@@ -14,6 +15,23 @@ router = APIRouter(prefix="/novels", tags=["novels"])
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./static/covers")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def _admin_authorized(x_admin_secret: Optional[str], x_telegram_init: Optional[str]) -> bool:
+    """ADMIN_SECRET, or valid Telegram Mini App initData for a user listed in ADMIN_TELEGRAM_ID."""
+    configured = os.getenv("ADMIN_SECRET", "change-me")
+    if (x_admin_secret or "").strip() and (x_admin_secret or "").strip() == configured:
+        return True
+    if x_telegram_init:
+        user = verify_telegram_init_data(x_telegram_init)
+        if user and str(user.get("id")) in ADMIN_TELEGRAM_IDS:
+            return True
+    return False
+
+
+def _admin_or_403(x_admin_secret: Optional[str], x_telegram_init: Optional[str]) -> None:
+    if not _admin_authorized(x_admin_secret, x_telegram_init):
+        raise HTTPException(status_code=403, detail="Admin access required (ADMIN_SECRET or Telegram owner)")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -35,6 +53,7 @@ async def save_cover_image(file: UploadFile) -> str:
 
 
 def novel_to_dict(novel: Novel, include_chapters: bool = False) -> dict:
+    chapters = novel.chapters if novel.chapters is not None else []
     data = {
         "id": novel.id,
         "title": novel.title,
@@ -43,12 +62,12 @@ def novel_to_dict(novel: Novel, include_chapters: bool = False) -> dict:
         "cover_image": novel.cover_image,
         "is_published": novel.is_published,
         "created_at": novel.created_at.isoformat(),
-        "chapter_count": len(novel.chapters),
+        "chapter_count": len(chapters),
     }
     if include_chapters:
         data["chapters"] = [
             {"id": c.id, "title": c.title, "content": c.content, "order": c.order}
-            for c in novel.chapters
+            for c in sorted(chapters, key=lambda c: (c.order, c.id))
         ]
     return data
 
@@ -58,15 +77,39 @@ def novel_to_dict(novel: Novel, include_chapters: bool = False) -> dict:
 @router.get("/")
 async def list_novels(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Novel).where(Novel.is_published == True).order_by(Novel.created_at.desc())
+        select(Novel)
+        .options(selectinload(Novel.chapters))
+        .where(Novel.is_published == True)
+        .order_by(Novel.created_at.desc())
     )
-    novels = result.scalars().all()
+    novels = result.scalars().unique().all()
+    return [novel_to_dict(n) for n in novels]
+
+
+@router.get("/admin/catalog")
+async def admin_list_novels(
+    x_admin_secret: Optional[str] = Header(default=None, alias="X-Admin-Secret"),
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
+    db: AsyncSession = Depends(get_db),
+):
+    """All novels (including drafts) for the admin UI."""
+    _admin_or_403(x_admin_secret, x_telegram_init_data)
+    result = await db.execute(
+        select(Novel)
+        .options(selectinload(Novel.chapters))
+        .order_by(Novel.created_at.desc())
+    )
+    novels = result.scalars().unique().all()
     return [novel_to_dict(n) for n in novels]
 
 
 @router.get("/{novel_id}")
 async def get_novel(novel_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Novel).where(Novel.id == novel_id))
+    result = await db.execute(
+        select(Novel)
+        .options(selectinload(Novel.chapters))
+        .where(Novel.id == novel_id)
+    )
     novel = result.scalar_one_or_none()
     if not novel:
         raise HTTPException(status_code=404, detail="Novel not found")
@@ -74,28 +117,18 @@ async def get_novel(novel_id: int, db: AsyncSession = Depends(get_db)):
 
 
 # ── Admin Endpoints ────────────────────────────────────────────────────────────
-# Protected by ADMIN_SECRET header
-
-def require_admin(x_admin_secret: str = None):
-    from fastapi import Header
-    async def _check(x_admin_secret: Optional[str] = Header(default=None)):
-        secret = os.getenv("ADMIN_SECRET", "change-me")
-        if x_admin_secret != secret:
-            raise HTTPException(status_code=403, detail="Admin access required")
-    return _check
-
 
 @router.post("/admin/novels")
 async def create_novel(
     title: str = Form(...),
     author: str = Form(...),
     description: str = Form(""),
-    x_admin_secret: str = Form(...),
+    x_admin_secret: str = Form(""),
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
     cover: Optional[UploadFile] = File(None),
     db: AsyncSession = Depends(get_db),
 ):
-    if x_admin_secret != os.getenv("ADMIN_SECRET", "change-me"):
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _admin_or_403(x_admin_secret or None, x_telegram_init_data)
 
     cover_path = None
     if cover and cover.filename:
@@ -111,18 +144,20 @@ async def create_novel(
 @router.put("/admin/novels/{novel_id}")
 async def update_novel(
     novel_id: int,
-    title: str = Form(None),
-    author: str = Form(None),
-    description: str = Form(None),
-    is_published: bool = Form(None),
-    x_admin_secret: str = Form(...),
+    title: Optional[str] = Form(default=None),
+    author: Optional[str] = Form(default=None),
+    description: Optional[str] = Form(default=None),
+    is_published: Optional[str] = Form(default=None),
+    x_admin_secret: str = Form(""),
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
     cover: Optional[UploadFile] = File(None),
     db: AsyncSession = Depends(get_db),
 ):
-    if x_admin_secret != os.getenv("ADMIN_SECRET", "change-me"):
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _admin_or_403(x_admin_secret or None, x_telegram_init_data)
 
-    result = await db.execute(select(Novel).where(Novel.id == novel_id))
+    result = await db.execute(
+        select(Novel).options(selectinload(Novel.chapters)).where(Novel.id == novel_id)
+    )
     novel = result.scalar_one_or_none()
     if not novel:
         raise HTTPException(status_code=404, detail="Novel not found")
@@ -133,8 +168,9 @@ async def update_novel(
         novel.author = author
     if description is not None:
         novel.description = description
-    if is_published is not None:
-        novel.is_published = is_published
+    if is_published is not None and str(is_published).strip() != "":
+        novel.is_published = str(is_published).lower() in ("1", "true", "yes", "on")
+
     if cover and cover.filename:
         novel.cover_image = await save_cover_image(cover)
 
@@ -146,23 +182,22 @@ async def update_novel(
 @router.delete("/admin/novels/{novel_id}")
 async def delete_novel(
     novel_id: int,
-    x_admin_secret: str,
+    x_admin_secret: Optional[str] = Header(default=None, alias="X-Admin-Secret"),
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
     db: AsyncSession = Depends(get_db),
 ):
-    if x_admin_secret != os.getenv("ADMIN_SECRET", "change-me"):
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _admin_or_403(x_admin_secret, x_telegram_init_data)
 
     result = await db.execute(select(Novel).where(Novel.id == novel_id))
     novel = result.scalar_one_or_none()
     if not novel:
         raise HTTPException(status_code=404, detail="Novel not found")
 
-    await db.delete(novel)
+    await db.execute(delete(Chapter).where(Chapter.novel_id == novel_id))
+    await db.execute(delete(Novel).where(Novel.id == novel_id))
     await db.commit()
     return {"deleted": novel_id}
 
-
-# ── Chapter Management ─────────────────────────────────────────────────────────
 
 @router.post("/admin/novels/{novel_id}/chapters")
 async def add_chapter(
@@ -170,30 +205,30 @@ async def add_chapter(
     title: str = Form(...),
     content: str = Form(...),
     order: int = Form(0),
-    x_admin_secret: str = Form(...),
+    x_admin_secret: str = Form(""),
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
     db: AsyncSession = Depends(get_db),
 ):
-    if x_admin_secret != os.getenv("ADMIN_SECRET", "change-me"):
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _admin_or_403(x_admin_secret or None, x_telegram_init_data)
 
     chapter = Chapter(novel_id=novel_id, title=title, content=content, order=order)
     db.add(chapter)
     await db.commit()
     await db.refresh(chapter)
-    return {"id": chapter.id, "title": chapter.title, "order": chapter.order}
+    return {"id": chapter.id, "title": chapter.title, "content": chapter.content, "order": chapter.order}
 
 
 @router.put("/admin/chapters/{chapter_id}")
 async def update_chapter(
     chapter_id: int,
-    title: str = Form(None),
-    content: str = Form(None),
-    order: int = Form(None),
-    x_admin_secret: str = Form(...),
+    title: Optional[str] = Form(default=None),
+    content: Optional[str] = Form(default=None),
+    order: Optional[int] = Form(default=None),
+    x_admin_secret: str = Form(""),
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
     db: AsyncSession = Depends(get_db),
 ):
-    if x_admin_secret != os.getenv("ADMIN_SECRET", "change-me"):
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _admin_or_403(x_admin_secret or None, x_telegram_init_data)
 
     result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
     chapter = result.scalar_one_or_none()
@@ -208,23 +243,24 @@ async def update_chapter(
         chapter.order = order
 
     await db.commit()
-    return {"id": chapter.id, "title": chapter.title}
+    await db.refresh(chapter)
+    return {"id": chapter.id, "title": chapter.title, "content": chapter.content, "order": chapter.order}
 
 
 @router.delete("/admin/chapters/{chapter_id}")
 async def delete_chapter(
     chapter_id: int,
-    x_admin_secret: str,
+    x_admin_secret: Optional[str] = Header(default=None, alias="X-Admin-Secret"),
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
     db: AsyncSession = Depends(get_db),
 ):
-    if x_admin_secret != os.getenv("ADMIN_SECRET", "change-me"):
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _admin_or_403(x_admin_secret, x_telegram_init_data)
 
     result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
     chapter = result.scalar_one_or_none()
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
 
-    await db.delete(chapter)
+    await db.execute(delete(Chapter).where(Chapter.id == chapter_id))
     await db.commit()
     return {"deleted": chapter_id}
