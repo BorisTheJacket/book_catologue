@@ -12,7 +12,19 @@ from urllib.parse import unquote
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-ADMIN_TELEGRAM_ID = (os.getenv("ADMIN_TELEGRAM_ID", "") or "").strip()
+
+
+def _parse_admin_telegram_ids(raw: str) -> frozenset[str]:
+    raw = (raw or "").strip().lstrip("\ufeff")
+    out = []
+    for part in raw.replace(";", ",").split(","):
+        x = part.strip()
+        if x:
+            out.append(x)
+    return frozenset(out)
+
+
+ADMIN_TELEGRAM_IDS = _parse_admin_telegram_ids(os.getenv("ADMIN_TELEGRAM_ID", ""))
 
 
 def verify_telegram_init_data(init_data: str) -> dict | None:
@@ -83,11 +95,7 @@ async def verify_user(
 
     if not user:
         # ADMIN_TELEGRAM_ID unlocks bot commands; Mini App only checks this table — auto-add owner.
-        if (
-            ADMIN_TELEGRAM_ID
-            and telegram_id == ADMIN_TELEGRAM_ID
-            and user_data is not None
-        ):
+        if telegram_id in ADMIN_TELEGRAM_IDS and user_data is not None:
             result_any = await db.execute(
                 select(WhitelistedUser).where(WhitelistedUser.telegram_id == telegram_id)
             )

@@ -29,7 +29,14 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-ADMIN_TELEGRAM_ID = (os.getenv("ADMIN_TELEGRAM_ID", "") or "").strip()  # your numeric TG user id
+_raw_admin = (os.getenv("ADMIN_TELEGRAM_ID", "") or "").strip().lstrip("\ufeff")
+# Comma-separated numeric Telegram user ids allowed
+_admin_parts = []
+for part in _raw_admin.replace(";", ",").split(","):
+    x = part.strip()
+    if x:
+        _admin_parts.append(x)
+ADMIN_TELEGRAM_IDS = frozenset(_admin_parts)
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://your-app.com")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./novels.db")
 
@@ -39,11 +46,19 @@ dp = Dispatcher()
 engine = create_async_engine(DATABASE_URL)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
+if ADMIN_TELEGRAM_IDS:
+    logging.info("ADMIN_TELEGRAM_ID: %s admin id(s) configured", len(ADMIN_TELEGRAM_IDS))
+else:
+    logging.warning(
+        "ADMIN_TELEGRAM_ID is empty — /start without invite will never treat anyone as owner. "
+        "Set ADMIN_TELEGRAM_ID in env (see backend/.env for Docker)."
+    )
+
 
 def is_admin(message: Message) -> bool:
-    if not ADMIN_TELEGRAM_ID:
+    if not message.from_user or not ADMIN_TELEGRAM_IDS:
         return False
-    return str(message.from_user.id) == ADMIN_TELEGRAM_ID
+    return str(message.from_user.id) in ADMIN_TELEGRAM_IDS
 
 
 async def ensure_whitelisted(message: Message, db: AsyncSession, invite_label: str = "admin") -> None:
