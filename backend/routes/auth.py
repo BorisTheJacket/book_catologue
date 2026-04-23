@@ -12,6 +12,7 @@ from urllib.parse import unquote
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+ADMIN_TELEGRAM_ID = (os.getenv("ADMIN_TELEGRAM_ID", "") or "").strip()
 
 
 def verify_telegram_init_data(init_data: str) -> dict | None:
@@ -60,6 +61,7 @@ async def verify_user(
     Returns access status.
     """
     init_data = payload.get("initData", "")
+    user_data = None
 
     # In development you can skip verification
     if os.getenv("DEV_MODE") == "true":
@@ -80,6 +82,31 @@ async def verify_user(
     user = result.scalar_one_or_none()
 
     if not user:
+        # ADMIN_TELEGRAM_ID unlocks bot commands; Mini App only checks this table — auto-add owner.
+        if (
+            ADMIN_TELEGRAM_ID
+            and telegram_id == ADMIN_TELEGRAM_ID
+            and user_data is not None
+        ):
+            result_any = await db.execute(
+                select(WhitelistedUser).where(WhitelistedUser.telegram_id == telegram_id)
+            )
+            existing_any = result_any.scalar_one_or_none()
+            if existing_any:
+                if not existing_any.is_active:
+                    existing_any.is_active = True
+                    await db.commit()
+                return {"access": True, "telegram_id": telegram_id}
+            db.add(
+                WhitelistedUser(
+                    telegram_id=telegram_id,
+                    username=user_data.get("username"),
+                    first_name=user_data.get("first_name"),
+                    invite_token="api_admin_bootstrap",
+                )
+            )
+            await db.commit()
+            return {"access": True, "telegram_id": telegram_id}
         raise HTTPException(status_code=403, detail="Access denied. You need an invite link.")
 
     return {"access": True, "telegram_id": telegram_id}

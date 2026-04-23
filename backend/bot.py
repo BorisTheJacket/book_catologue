@@ -2,6 +2,7 @@
 Telegram bot — handles invite links and whitelisting.
 
 Commands (send these in your private chat with the bot):
+  /start             — if you are ADMIN_TELEGRAM_ID: whitelist + Open Library button
   /start <token>     — user clicks invite link, gets whitelisted
   /genlink [label]   — YOU generate a new invite link
   /genlink_once      — single-use invite link
@@ -28,7 +29,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", "")  # your personal TG id
+ADMIN_TELEGRAM_ID = (os.getenv("ADMIN_TELEGRAM_ID", "") or "").strip()  # your numeric TG user id
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://your-app.com")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./novels.db")
 
@@ -40,7 +41,32 @@ AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=F
 
 
 def is_admin(message: Message) -> bool:
+    if not ADMIN_TELEGRAM_ID:
+        return False
     return str(message.from_user.id) == ADMIN_TELEGRAM_ID
+
+
+async def ensure_whitelisted(message: Message, db: AsyncSession, invite_label: str = "admin") -> None:
+    """Create or reactivate whitelist row for this Telegram user (used for admin bootstrap)."""
+    telegram_id = str(message.from_user.id)
+    result = await db.execute(
+        select(WhitelistedUser).where(WhitelistedUser.telegram_id == telegram_id)
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        if not existing.is_active:
+            existing.is_active = True
+            await db.commit()
+        return
+    db.add(
+        WhitelistedUser(
+            telegram_id=telegram_id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            invite_token=invite_label,
+        )
+    )
+    await db.commit()
 
 
 # ── /start ────────────────────────────────────────────────────────────────────
@@ -50,6 +76,17 @@ async def cmd_start(message: Message, command: CommandObject):
     token = command.args  # token passed via t.me/bot?start=TOKEN
 
     if not token:
+        # Mini App auth checks the whitelist, not ADMIN_TELEGRAM_ID — auto-add admin
+        if is_admin(message):
+            async with AsyncSessionLocal() as db:
+                await ensure_whitelisted(message, db, invite_label="admin_bootstrap")
+            await message.answer(
+                "✅ You are the bot admin — library access is enabled.\n\n"
+                "📖 <b>Open the Reading App</b>",
+                parse_mode="HTML",
+                reply_markup=build_app_button(),
+            )
+            return
         await message.answer(
             "👋 Welcome! You need an invite link to access the reading app.\n"
             "Please ask the author for an invite."
@@ -135,6 +172,7 @@ def build_app_button():
 @dp.message(Command("genlink"))
 async def cmd_genlink(message: Message, command: CommandObject):
     if not is_admin(message):
+        await message.answer("⛔ This command is only for the bot owner.")
         return
 
     label = command.args or "general"
@@ -157,6 +195,7 @@ async def cmd_genlink(message: Message, command: CommandObject):
 @dp.message(Command("genlink_once"))
 async def cmd_genlink_once(message: Message, command: CommandObject):
     if not is_admin(message):
+        await message.answer("⛔ This command is only for the bot owner.")
         return
 
     label = command.args or "single-use"
@@ -181,6 +220,7 @@ async def cmd_genlink_once(message: Message, command: CommandObject):
 @dp.message(Command("links"))
 async def cmd_links(message: Message):
     if not is_admin(message):
+        await message.answer("⛔ This command is only for the bot owner.")
         return
 
     async with AsyncSessionLocal() as db:
@@ -208,6 +248,7 @@ async def cmd_links(message: Message):
 @dp.message(Command("revoke"))
 async def cmd_revoke(message: Message, command: CommandObject):
     if not is_admin(message):
+        await message.answer("⛔ This command is only for the bot owner.")
         return
 
     token = command.args
@@ -234,6 +275,7 @@ async def cmd_revoke(message: Message, command: CommandObject):
 @dp.message(Command("users"))
 async def cmd_users(message: Message):
     if not is_admin(message):
+        await message.answer("⛔ This command is only for the bot owner.")
         return
 
     async with AsyncSessionLocal() as db:
@@ -260,6 +302,7 @@ async def cmd_users(message: Message):
 @dp.message(Command("removeuser"))
 async def cmd_removeuser(message: Message, command: CommandObject):
     if not is_admin(message):
+        await message.answer("⛔ This command is only for the bot owner.")
         return
 
     telegram_id = command.args
