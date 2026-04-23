@@ -35,6 +35,16 @@ services:
     # Default 8001 avoids clashing with another uvicorn on host :8000
     ports:
       - "${API_HOST_PORT:-8001}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()
+      interval: 10s
+      timeout: 8s
+      retries: 6
+      start_period: 25s
 
   # ── Telegram bot ─────────────────────────────────────────────────────────────
   bot:
@@ -58,7 +68,8 @@ services:
         # Optional. If unset, bundle uses same-origin /api/ — proxied inside this image to service "api".
         VITE_API_URL: ${VITE_API_URL:-}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
     # Default 8082 avoids clashing with host nginx on :80; override with FRONTEND_HOST_PORT
     ports:
