@@ -55,8 +55,10 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
       args:
-        # Optional. If unset, production bundle calls same-origin /api/ (host nginx must proxy /api/ -> api).
+        # Optional. If unset, bundle uses same-origin /api/ — proxied inside this image to service "api".
         VITE_API_URL: ${VITE_API_URL:-}
+    depends_on:
+      - api
     restart: unless-stopped
     # Default 8082 avoids clashing with host nginx on :80; override with FRONTEND_HOST_PORT
     ports:
