@@ -1,8 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider, useAuth } from './hooks/useAuth'
-import Catalogue from './pages/Catalogue'
-import Reader from './pages/Reader'
-import Admin from './pages/Admin'
+import { AuthProvider, useAuth } from './useAuth'
+import Catalogue from './Catalogue'
+import Reader from './Reader'
+import Admin from './Admin'
 import './index.css'
 
 function AuthGate({ children }) {
