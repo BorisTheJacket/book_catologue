@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 from typing import Optional
 from database import get_db
@@ -53,7 +53,11 @@ async def save_cover_image(file: UploadFile) -> str:
 
 
 def novel_to_dict(novel: Novel, include_chapters: bool = False) -> dict:
-    chapters = novel.chapters if novel.chapters is not None else []
+    # Touching novel.chapters lazy-loads the relationship, which raises
+    # MissingGreenlet under async SQLAlchemy. Only read it when it's already
+    # loaded (e.g. via selectinload) — otherwise assume empty.
+    chapters_loaded = "chapters" not in sa_inspect(novel).unloaded
+    chapters = list(novel.chapters) if chapters_loaded else []
     data = {
         "id": novel.id,
         "title": novel.title,
@@ -137,7 +141,14 @@ async def create_novel(
     novel = Novel(title=title, author=author, description=description, cover_image=cover_path)
     db.add(novel)
     await db.commit()
-    await db.refresh(novel)
+    # Reload with chapters eagerly loaded so the response has chapter_count
+    # without triggering a sync lazy-load (which crashes under async SQLAlchemy).
+    result = await db.execute(
+        select(Novel)
+        .options(selectinload(Novel.chapters))
+        .where(Novel.id == novel.id)
+    )
+    novel = result.scalar_one()
     return novel_to_dict(novel)
 
 
@@ -175,7 +186,13 @@ async def update_novel(
         novel.cover_image = await save_cover_image(cover)
 
     await db.commit()
-    await db.refresh(novel)
+    # Reload with chapters eagerly loaded (refresh alone does not re-run selectinload).
+    result = await db.execute(
+        select(Novel)
+        .options(selectinload(Novel.chapters))
+        .where(Novel.id == novel.id)
+    )
+    novel = result.scalar_one()
     return novel_to_dict(novel, include_chapters=True)
 
 
