@@ -1,4 +1,23 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+/**
+ * API base URL.
+ * - Set VITE_API_URL at build time when needed (e.g. http://localhost:8001).
+ * - In production builds, if unset, use same origin + /api (host nginx must proxy /api/ -> FastAPI).
+ */
+function getApiBaseUrl() {
+  const fromEnv = import.meta.env.VITE_API_URL
+  if (fromEnv != null && String(fromEnv).trim() !== '') {
+    return String(fromEnv).trim().replace(/\/$/, '')
+  }
+  if (import.meta.env.DEV) {
+    return 'http://localhost:8000'
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}/api`
+  }
+  return 'http://localhost:8000'
+}
+
+const BASE_URL = getApiBaseUrl()
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {

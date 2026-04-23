@@ -1,4 +1,18 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+function getApiBaseUrl() {
+  const fromEnv = import.meta.env.VITE_API_URL
+  if (fromEnv != null && String(fromEnv).trim() !== '') {
+    return String(fromEnv).trim().replace(/\/$/, '')
+  }
+  if (import.meta.env.DEV) {
+    return 'http://localhost:8000'
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}/api`
+  }
+  return 'http://localhost:8000'
+}
+
+const BASE_URL = getApiBaseUrl()
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {
