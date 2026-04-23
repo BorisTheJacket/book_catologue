@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   fetchNovel,
@@ -53,7 +54,10 @@ export default function Admin() {
   return (
     <div style={styles.page}>
       <header style={styles.header}>
-        <h1 style={styles.title}>Admin Panel</h1>
+        <div style={styles.headerLeft}>
+          <Link to="/" style={styles.backLink}>← Library</Link>
+          <h1 style={styles.title}>Admin Panel</h1>
+        </div>
         <button style={styles.addBtn} onClick={() => setView('add')}>+ New Novel</button>
       </header>
 
@@ -357,6 +361,16 @@ const styles = {
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     padding: '40px 20px 20px', borderBottom: '1px solid var(--border)', marginBottom: 16,
+    gap: 16,
+  },
+  headerLeft: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 },
+  backLink: {
+    fontFamily: 'var(--font-sans)',
+    fontSize: '0.72rem',
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
+    color: 'var(--accent)',
+    textDecoration: 'none',
   },
   title: { fontFamily: 'var(--font-serif)', fontSize: '1.8rem', fontWeight: 300 },
   addBtn: {

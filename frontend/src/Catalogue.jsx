@@ -30,7 +30,12 @@ export default function Catalogue() {
     <div style={styles.page}>
       <header style={styles.header}>
         <p style={styles.subtitle}>Library</p>
-        <h1 style={styles.title}>Your Novels</h1>
+        <div style={styles.headerRow}>
+          <h1 style={styles.title}>Your Novels</h1>
+          {matchesAdminTelegramId && (
+            <Link to="/admin" style={styles.adminLink}>Admin →</Link>
+          )}
+        </div>
         <div style={styles.divider} />
       </header>
 
@@ -141,6 +146,24 @@ const styles = {
     padding: '48px 24px 32px',
     borderBottom: '1px solid var(--border)',
     marginBottom: 24,
+  },
+  headerRow: {
+    display: 'flex',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  adminLink: {
+    fontFamily: 'var(--font-sans)',
+    fontSize: '0.72rem',
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
+    color: 'var(--accent)',
+    textDecoration: 'none',
+    padding: '6px 14px',
+    border: '1px solid var(--accent)',
+    borderRadius: 20,
+    flexShrink: 0,
   },
   subtitle: {
     fontFamily: 'var(--font-sans)',
