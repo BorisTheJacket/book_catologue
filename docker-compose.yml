@@ -1,0 +1,64 @@
+services:
+
+  # ── PostgreSQL database ──────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: novels
+      POSTGRES_USER: novels_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novels_user -d novels"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI backend ──────────────────────────────────────────────────────────
+  api:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      ADMIN_TELEGRAM_ID: ${ADMIN_TELEGRAM_ID}
+      ADMIN_SECRET: ${ADMIN_SECRET}
+      MINI_APP_URL: ${MINI_APP_URL}
+      DATABASE_URL: postgresql+asyncpg://novels_user:${POSTGRES_PASSWORD}@db:5432/novels
+      UPLOAD_DIR: /app/static/covers
+    volumes:
+      - covers_data:/app/static/covers
+    ports:
+      - "8000:8000"
+
+  # ── Telegram bot ─────────────────────────────────────────────────────────────
+  bot:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python bot.py
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      ADMIN_TELEGRAM_ID: ${ADMIN_TELEGRAM_ID}
+      MINI_APP_URL: ${MINI_APP_URL}
+      DATABASE_URL: postgresql+asyncpg://novels_user:${POSTGRES_PASSWORD}@db:5432/novels
+
+  # ── React frontend ────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+
+volumes:
+  postgres_data:
+  covers_data:
